@@ -1,0 +1,2211 @@
+---
+title: "TF_expression"
+author: "MO_Baudement"
+date: "from 2023-11-23 to 2024-01-30"
+output: html_document
+---
+
+# R Markdown: Analysis of the expression of the genes producing transcription factors
+
+## conversion of the data for japanese Medaka (Oryzias latipes)
+
+IGBD to Ensembl annotation Data taken for ref Medaka: Transcription profiling of medaka timecourse embryonic samples and adult tissues samples 16. june 2020, Li Y, Tu Q Citation: Li Y, Liu Y, Yang H, Zhang T et al. Dynamic transcriptional and chromatin accessibility landscape of medaka embryogenesis. Genome Res 2020 Jun;30(6):924-937. PMID: 32591361 Accession: <https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE136018> Strain Hd-rR RNA extraction using both TRIzol and Qiagen RNeasy Micro Kit Illumina TruSeq stranded mRNA library preparation protocol for RNA-seq samples Genome_build: medaka ASM223467v1 HiSeq X Ten
+
+The number of hours (hpf) and stages determined as the one the closest to the data points of AQUA-FAANG have been determined thanks to the paper: Stages of normal development in the medaka Oryzias latipes, Takashi Iwamatsu; Mechanisms of Development, 121 (2004) 605-618
+
+<https://tinyurl.com/24krbc3n>
+
+Here the link to access to the table of correspondance IGDB and ENS; 
+<http://tulab.genetics.ac.cn/medaka_omics/>
+
+```{r }
+
+setwd("C:/Users/maribaud/OneDrive - Norwegian University of Life Sciences/Desktop/TF_expression_salmonid_paper/")
+read.table("GSE136018_timecourse_expression_TPM.tab",header=TRUE)->expression_medaka
+read.csv("igdb_ens_info.txt",header=TRUE,stringsAsFactors = FALSE,sep="\t")->conversion_table
+conversion_table[,c(1:2)]->conversion_table_short
+## some lines are duplicated in the conversion table, so need to be eliminated;
+unique_conversion_table_short <- conversion_table_short[!duplicated(conversion_table_short[c("IGDB", "ENS")]), ]
+colnames(expression_medaka)[1]<-"IGDB"
+join_data<-merge(expression_medaka,unique_conversion_table_short,by.x="IGDB",all.x=TRUE)
+##some ENS have no corresponding data
+which(is.na(join_data$ENS)==TRUE)->NO_correspondance_name
+join_data[-c(NO_correspondance_name),]->join_data2
+join_data2->MEDAKA
+
+## MEDAKA is containing the genes of Medaka + expression level at different time points, with Ensembl ID
+```
+
+## reformatting of the table MEDAKA
+
+The table MEDAKA contains TPM values but also mean values for each stage (the only ones we need)
+
+```{r}
+cbind(MEDAKA[,35],MEDAKA[,c(24:30,32)])->MEDAKA
+colnames(MEDAKA)<-c("gene_ID_Olat","Olat_01_LateCleavage","Olat_04_LateBlastula","Olat_06_MidGastrula","Olat_08_EarlySomito","Olat_10_MidSomito","Olat_12_LateSomito","Olat_13_EarlyEyed","Olat_14_LateEyed")
+
+```
+
+## open and calculate mean value for expression data of Zebrafish
+
+Data taken from Danio-code DCC Data from Busch-Nentwich_Lab Citation: 10.7554/eLife.30860 Accession: <https://danio-code.zfin.org/dataExport/daniocode/detailSeries/324/>
+
+Strain: HLF HiSeq 2500 unstranded pair-end RLT buffer, Qiagen TissueLyser and Agencourt RNAClean XP
+
+Stage Late_somito has only 4 replicates instead of 5 (one of them has been missed to be re-analysed with danRer11 version in the Danio Code website)
+
+The number of hours (hpf) and stages determined as the one the closest to the data points of AQUA-FAANG have been determined thanks to the paper: <https://zfin.org/zf_info/zfbook/stages/>
+
+## loading all the data corresponding to Zebrafish
+
+```{r }
+
+
+#time points
+time_points <- c("hpf0", "hpf0.75", "hpf2.25", "hpf3", "hpf4.33", "hpf5.25", "hpf6", "hpf8", "hpf10.33", "hpf16", "hpf19", "hpf24", "hpf30", "hpf36", "hpf48", "hpf72")
+#replicates
+replicates <- c("rep1", "rep2", "rep3", "rep4", "rep5")
+#path
+
+
+for (time_point in time_points) {
+  for (replicate in replicates) {
+    # Construct the file path
+    file_path <- paste0("C:/Users/maribaud/OneDrive - Norwegian University of Life Sciences/Desktop/TF_expression_salmonid_paper/zebrafish_embryo_expression/", time_point, "/", replicate, "/")
+    all_files <- list.files(file_path, full.names = TRUE)
+    tab_files <- all_files[grep("\\.tab$", all_files)]
+    
+    if (length(tab_files) == 1) {
+      assign(paste0(time_point, "_", replicate), read.table(tab_files, sep="\t"))
+	  assign(paste0(time_point, "_", replicate), get(paste0(time_point, "_", replicate))[-c(1:4), -c(2, 3)])
+    } else {
+      # Handle the case where there are no .tab files
+    }
+  }
+}
+
+for (time_point in time_points) {
+  for (replicate in replicates) {
+    # Construct the object name
+    object_name <- paste0(time_point, "_", replicate)
+    
+    # Check if the object exists
+    if (exists(object_name)) {
+      data <- get(object_name)
+      c("gene_ID", paste0(time_point, "_", replicate)) -> colnames_data
+      colnames(data) <- colnames_data
+      assign(object_name, data)
+    } else {
+      # Handle the case where the object is not found
+      warning(paste("Object", object_name, "not found. Skipping..."))
+    }
+  }
+}
+
+```
+
+## calcul of the mean value by time point
+
+```{r}
+(hpf0_rep1[,2]+hpf0_rep2[,2]+hpf0_rep3[,2]+hpf0_rep4[,2])/4->hpf0_mean
+(hpf0.75_rep1[,2]+hpf0.75_rep2[,2]+hpf0.75_rep3[,2]+hpf0.75_rep4[,2]+hpf0.75_rep5[,2])/5->hpf0.75_mean
+(hpf2.25_rep1[,2]+hpf2.25_rep2[,2]+hpf2.25_rep3[,2]+hpf2.25_rep4[,2]+hpf2.25_rep5[,2])/5->hpf2.25_mean
+(hpf3_rep1[,2]+hpf3_rep2[,2]+hpf3_rep3[,2]+hpf3_rep4[,2]+hpf3_rep5[,2])/5->hpf3_mean
+(hpf4.33_rep1[,2]+hpf4.33_rep2[,2]+hpf4.33_rep3[,2]+hpf4.33_rep4[,2]+hpf4.33_rep5[,2])/5->hpf4.33_mean
+(hpf5.25_rep1[,2]+hpf5.25_rep2[,2]+hpf5.25_rep3[,2]+hpf5.25_rep4[,2]+hpf5.25_rep5[,2])/5->hpf5.25_mean
+(hpf6_rep1[,2]+hpf6_rep2[,2]+hpf6_rep3[,2]+hpf6_rep4[,2]+hpf6_rep5[,2])/5->hpf6_mean
+(hpf8_rep1[,2]+hpf8_rep2[,2]+hpf8_rep3[,2]+hpf8_rep4[,2]+hpf8_rep5[,2])/5->hpf8_mean
+(hpf10.33_rep1[,2]+hpf10.33_rep2[,2]+hpf10.33_rep3[,2]+hpf10.33_rep4[,2]+hpf10.33_rep5[,2])/5->hpf10.33_mean
+(hpf16_rep1[,2]+hpf16_rep2[,2]+hpf16_rep3[,2]+hpf16_rep4[,2]+hpf16_rep5[,2])/5->hpf16_mean
+(hpf19_rep1[,2]+hpf19_rep2[,2]+hpf19_rep3[,2]+hpf19_rep4[,2]+hpf19_rep5[,2])/5->hpf19_mean
+(hpf24_rep2[,2]+hpf24_rep3[,2]+hpf24_rep4[,2]+hpf24_rep5[,2])/4->hpf24_mean
+(hpf30_rep1[,2]+hpf30_rep2[,2]+hpf30_rep3[,2]+hpf30_rep4[,2]+hpf30_rep5[,2])/5->hpf30_mean
+(hpf36_rep1[,2]+hpf36_rep2[,2]+hpf36_rep3[,2]+hpf36_rep4[,2]+hpf36_rep5[,2])/5->hpf36_mean
+(hpf48_rep1[,2]+hpf48_rep2[,2]+hpf48_rep3[,2]+hpf48_rep4[,2]+hpf48_rep5[,2])/5->hpf48_mean
+(hpf72_rep1[,2]+hpf72_rep2[,2]+hpf72_rep3[,2]+hpf72_rep4[,2]+hpf72_rep5[,2])/5->hpf72_mean
+```
+
+## formatting of the column
+
+```{r}
+
+data.frame(hpf0_rep1[,1],hpf0.75_mean,hpf2.25_mean,hpf3_mean,hpf4.33_mean,hpf5.25_mean,hpf6_mean,hpf8_mean,hpf10.33_mean,hpf16_mean,
+hpf19_mean,hpf24_mean,hpf48_mean,hpf72_mean)->ZEBRAFISH
+
+colnames(ZEBRAFISH)<-c("gene_ID_Drer","Drer_01_LateCleavage","Drer_02_EarlyBlastula","Drer_03_MidBlastula","Drer_04_LateBlastula","Drer_05_EarlyGastrula","Drer_06_MidGastrula","Drer_07_LateGastrula",
+"Drer_08_EarlySomito","Drer_10_MidSomito","Drer_11_MidLateSomito","Drer_12_LateSomito","Drer_13_EarlyEyed","Drer_14_LateEyed")
+```
+
+## recovery of the RNA data for Atlantic salmon and rainbow trout
+
+```{r}
+setwd("C:/Users/maribaud/OneDrive - Norwegian University of Life Sciences/Desktop/TF_expression_salmonid_paper/")
+
+read.table("salmon.merged.gene_tpm.tsv",header=TRUE)->salmon
+read.table("trout.merged.gene_tpm.tsv",header=TRUE)->trout
+salmon[,c(1,21,22,23,3,4,5,33,34,35,18,19,20,9,10,11,36,37,38,27,28,29,15,16,17,12,13,14,42,43,44,39,40,41,30,31,32,6,7,8,24,25,26)]->SALMON
+trout[,c(1,21,22,23,3,4,5,33,34,35,18,19,20,9,10,11,36,37,38,27,28,29,15,16,17,12,13,14,42,43,44,39,40,41,30,31,32,6,7,8,24,25,26)]->TROUT
+
+```
+
+## shaping of the data Atlantic salmon and rainbow trout by duplicates copies
+
+```{r}
+read.table("DrerTF_orthologs.txt",header=TRUE)->TF_genes
+
+SALMON->SALMON1
+SALMON->SALMON2
+colnames(SALMON1)[1]<-"gene_ID_SSA1"
+colnames(SALMON2)[1]<-"gene_ID_SSA2"
+TROUT->TROUT1
+TROUT->TROUT2
+colnames(TROUT1)[1]<-"gene_ID_OMYK1"
+colnames(TROUT2)[1]<-"gene_ID_OMYK2"
+TF_genes[,c(1,3)]->TF_genes_SSA1
+TF_genes[,c(1,6)]->TF_genes_SSA2
+TF_genes[,c(1,4)]->TF_genes_OMYK1
+TF_genes[,c(1,5)]->TF_genes_OMYK2
+colnames(TF_genes_OMYK1)[2]<-"gene_ID_OMYK1"
+colnames(TF_genes_OMYK2)[2]<-"gene_ID_OMYK2"
+colnames(TF_genes_SSA1)[2]<-"gene_ID_SSA1"
+colnames(TF_genes_SSA2)[2]<-"gene_ID_SSA2"
+```
+
+## calculate of the mean value of the expression level of each duplicates separately, 3 replicates by time points, 14 time points reference
+
+### for SSA1
+
+```{r}
+(SALMON1[,2]+SALMON1[,3]+SALMON1[,4])/3->SSA1_01_LateCleavage
+(SALMON1[,5]+SALMON1[,6]+SALMON1[,7])/3->SSA1_02_EarlyBlastula
+(SALMON1[,8]+SALMON1[,9]+SALMON1[,10])/3->SSA1_03_MidBlastula
+(SALMON1[,11]+SALMON1[,12]+SALMON1[,13])/3->SSA1_04_LateBlastula
+(SALMON1[,14]+SALMON1[,15]+SALMON1[,16])/3->SSA1_05_EarlyGastrula
+(SALMON1[,17]+SALMON1[,18]+SALMON1[,19])/3->SSA1_06_MidGastrula
+(SALMON1[,20]+SALMON1[,21]+SALMON1[,22])/3->SSA1_07_LateGastrula
+(SALMON1[,23]+SALMON1[,24]+SALMON1[,25])/3->SSA1_08_EarlySomito
+(SALMON1[,26]+SALMON1[,27]+SALMON1[,28])/3->SSA1_09_EarlyMidSomito
+(SALMON1[,29]+SALMON1[,30]+SALMON1[,31])/3->SSA1_10_MidSomito
+(SALMON1[,32]+SALMON1[,33]+SALMON1[,34])/3->SSA1_11_MidLateSomito
+(SALMON1[,35]+SALMON1[,36]+SALMON1[,37])/3->SSA1_12_LateSomito
+(SALMON1[,38]+SALMON1[,39]+SALMON1[,40])/3->SSA1_13_EarlyEyed
+(SALMON1[,41]+SALMON1[,42]+SALMON1[,43])/3->SSA1_14_LateEyed
+```
+
+### for SSA2
+
+```{r}
+(SALMON2[,2]+SALMON2[,3]+SALMON2[,4])/3->SSA2_01_LateCleavage
+(SALMON2[,5]+SALMON2[,6]+SALMON2[,7])/3->SSA2_02_EarlyBlastula
+(SALMON2[,8]+SALMON2[,9]+SALMON2[,10])/3->SSA2_03_MidBlastula
+(SALMON2[,11]+SALMON2[,12]+SALMON2[,13])/3->SSA2_04_LateBlastula
+(SALMON2[,14]+SALMON2[,15]+SALMON2[,16])/3->SSA2_05_EarlyGastrula
+(SALMON2[,17]+SALMON2[,18]+SALMON2[,19])/3->SSA2_06_MidGastrula
+(SALMON2[,20]+SALMON2[,21]+SALMON2[,22])/3->SSA2_07_LateGastrula
+(SALMON2[,23]+SALMON2[,24]+SALMON2[,25])/3->SSA2_08_EarlySomito
+(SALMON2[,26]+SALMON2[,27]+SALMON2[,28])/3->SSA2_09_EarlyMidSomito
+(SALMON2[,29]+SALMON2[,30]+SALMON2[,31])/3->SSA2_10_MidSomito
+(SALMON2[,32]+SALMON2[,33]+SALMON2[,34])/3->SSA2_11_MidLateSomito
+(SALMON2[,35]+SALMON2[,36]+SALMON2[,37])/3->SSA2_12_LateSomito
+(SALMON2[,38]+SALMON2[,39]+SALMON2[,40])/3->SSA2_13_EarlyEyed
+(SALMON2[,41]+SALMON2[,42]+SALMON2[,43])/3->SSA2_14_LateEyed
+```
+
+### for OMYK1
+
+```{r}
+(TROUT1[,2]+TROUT1[,3]+TROUT1[,4])/3->OMYK1_01_LateCleavage
+(TROUT1[,5]+TROUT1[,6]+TROUT1[,7])/3->OMYK1_02_EarlyBlastula
+(TROUT1[,8]+TROUT1[,9]+TROUT1[,10])/3->OMYK1_03_MidBlastula
+(TROUT1[,11]+TROUT1[,12]+TROUT1[,13])/3->OMYK1_04_LateBlastula
+(TROUT1[,14]+TROUT1[,15]+TROUT1[,16])/3->OMYK1_05_EarlyGastrula
+(TROUT1[,17]+TROUT1[,18]+TROUT1[,19])/3->OMYK1_06_MidGastrula
+(TROUT1[,20]+TROUT1[,21]+TROUT1[,22])/3->OMYK1_07_LateGastrula
+(TROUT1[,23]+TROUT1[,24]+TROUT1[,25])/3->OMYK1_08_EarlySomito
+(TROUT1[,26]+TROUT1[,27]+TROUT1[,28])/3->OMYK1_09_EarlyMidSomito
+(TROUT1[,29]+TROUT1[,30]+TROUT1[,31])/3->OMYK1_10_MidSomito
+(TROUT1[,32]+TROUT1[,33]+TROUT1[,34])/3->OMYK1_11_MidLateSomito
+(TROUT1[,35]+TROUT1[,36]+TROUT1[,37])/3->OMYK1_12_LateSomito
+(TROUT1[,38]+TROUT1[,39]+TROUT1[,40])/3->OMYK1_13_EarlyEyed
+(TROUT1[,41]+TROUT1[,42]+TROUT1[,43])/3->OMYK1_14_LateEyed
+```
+
+### for OMYK2
+
+```{r}
+(TROUT2[,2]+TROUT2[,3]+TROUT2[,4])/3->OMYK2_01_LateCleavage
+(TROUT2[,5]+TROUT2[,6]+TROUT2[,7])/3->OMYK2_02_EarlyBlastula
+(TROUT2[,8]+TROUT2[,9]+TROUT2[,10])/3->OMYK2_03_MidBlastula
+(TROUT2[,11]+TROUT2[,12]+TROUT2[,13])/3->OMYK2_04_LateBlastula
+(TROUT2[,14]+TROUT2[,15]+TROUT2[,16])/3->OMYK2_05_EarlyGastrula
+(TROUT2[,17]+TROUT2[,18]+TROUT2[,19])/3->OMYK2_06_MidGastrula
+(TROUT2[,20]+TROUT2[,21]+TROUT2[,22])/3->OMYK2_07_LateGastrula
+(TROUT2[,23]+TROUT2[,24]+TROUT2[,25])/3->OMYK2_08_EarlySomito
+(TROUT2[,26]+TROUT2[,27]+TROUT2[,28])/3->OMYK2_09_EarlyMidSomito
+(TROUT2[,29]+TROUT2[,30]+TROUT2[,31])/3->OMYK2_10_MidSomito
+(TROUT2[,32]+TROUT2[,33]+TROUT2[,34])/3->OMYK2_11_MidLateSomito
+(TROUT2[,35]+TROUT2[,36]+TROUT2[,37])/3->OMYK2_12_LateSomito
+(TROUT2[,38]+TROUT2[,39]+TROUT2[,40])/3->OMYK2_13_EarlyEyed
+(TROUT2[,41]+TROUT2[,42]+TROUT2[,43])/3->OMYK2_14_LateEyed
+```
+
+## formatting in data frame
+
+```{r}
+
+data.frame(SALMON1[,1],SSA1_01_LateCleavage,SSA1_02_EarlyBlastula,SSA1_03_MidBlastula,SSA1_04_LateBlastula,SSA1_05_EarlyGastrula,SSA1_06_MidGastrula,SSA1_07_LateGastrula,
+SSA1_08_EarlySomito,SSA1_09_EarlyMidSomito,SSA1_10_MidSomito,SSA1_11_MidLateSomito,SSA1_12_LateSomito,SSA1_13_EarlyEyed,SSA1_14_LateEyed)->SSA1
+
+colnames(SSA1)[1]<-"gene_ID_SSA1"
+
+data.frame(SALMON2[,1],SSA2_01_LateCleavage,SSA2_02_EarlyBlastula,SSA2_03_MidBlastula,SSA2_04_LateBlastula,SSA2_05_EarlyGastrula,SSA2_06_MidGastrula,SSA2_07_LateGastrula,
+SSA2_08_EarlySomito,SSA2_09_EarlyMidSomito,SSA2_10_MidSomito,SSA2_11_MidLateSomito,SSA2_12_LateSomito,SSA2_13_EarlyEyed,SSA2_14_LateEyed)->SSA2
+
+colnames(SSA2)[1]<-"gene_ID_SSA2"
+
+
+data.frame(TROUT1[,1],OMYK1_01_LateCleavage,OMYK1_02_EarlyBlastula,OMYK1_03_MidBlastula,OMYK1_04_LateBlastula,OMYK1_05_EarlyGastrula,OMYK1_06_MidGastrula,OMYK1_07_LateGastrula,
+OMYK1_08_EarlySomito,OMYK1_09_EarlyMidSomito,OMYK1_10_MidSomito,OMYK1_11_MidLateSomito,OMYK1_12_LateSomito,OMYK1_13_EarlyEyed,OMYK1_14_LateEyed)->OMYK1
+
+colnames(OMYK1)[1]<-"gene_ID_OMYK1"
+
+data.frame(TROUT2[,1],OMYK2_01_LateCleavage,OMYK2_02_EarlyBlastula,OMYK2_03_MidBlastula,OMYK2_04_LateBlastula,OMYK2_05_EarlyGastrula,OMYK2_06_MidGastrula,OMYK2_07_LateGastrula,
+OMYK2_08_EarlySomito,OMYK2_09_EarlyMidSomito,OMYK2_10_MidSomito,OMYK2_11_MidLateSomito,OMYK2_12_LateSomito,OMYK2_13_EarlyEyed,OMYK2_14_LateEyed)->OMYK2
+
+colnames(OMYK2)[1]<-"gene_ID_OMYK2"
+
+```
+
+##merging of all the data together compared to the clades defined by Lars through TFDB
+
+```{r}
+join_SSA1<-merge(TF_genes_SSA1,SSA1,by.x="gene_ID_SSA1",all.x=TRUE)
+join_SSA2<-merge(TF_genes_SSA2,SSA2,by.x="gene_ID_SSA2",all.x=TRUE)
+join_OMYK1<-merge(TF_genes_OMYK1,OMYK1,by.x="gene_ID_OMYK1",all.x=TRUE)
+join_OMYK2<-merge(TF_genes_OMYK2,OMYK2,by.x="gene_ID_OMYK2",all.x=TRUE)
+TF_genes[,c(1,2)]->TF_genes_Olat
+colnames(TF_genes_Olat)[2]<-"gene_ID_Olat"
+join_Olat<-merge(TF_genes_Olat,MEDAKA,by.x="gene_ID_Olat",all.x=TRUE)
+TF_genes[,c(1,7)]->TF_genes_Drer
+colnames(TF_genes_Drer)[2]<-"gene_ID_Drer"
+join_Drer<-merge(TF_genes_Drer,ZEBRAFISH,by.x="gene_ID_Drer",all.x=TRUE)
+
+## super merge
+
+merge(join_Olat,join_Drer,by.x="Clupeocephala",all.x=TRUE)->TF_genes_expression1
+merge(TF_genes_expression1,join_SSA1,by.x="Clupeocephala",all.x=TRUE)->TF_genes_expression2
+merge(TF_genes_expression2,join_SSA2,by.x="Clupeocephala",all.x=TRUE)->TF_genes_expression3
+merge(TF_genes_expression3,join_OMYK1,by.x="Clupeocephala",all.x=TRUE)->TF_genes_expression4
+merge(TF_genes_expression4,join_OMYK2,by.x="Clupeocephala",all.x=TRUE)->TF_genes_expression5
+
+```
+
+##save this data and keep them at expression value data for downstream correlation analysis
+
+```{r}
+
+write.table(TF_genes_expression5,"TF_expression_specie_stage_mean.txt",sep="\t",col.names=TRUE)
+TF_genes_expression5->value_for_correlation
+TF_genes_expression5->value_for_ranking
+```
+
+
+#EXPRESSION LEVEL NORMALISATION (add from 2024.01.31)
+## normalisation done usually by Gareth, based on "Comparative regulomics supports pervasive selection on gene dosage following whole genome duplication" (https://doi.org/10.1186/s13059-021-02323-0) 
+
+```{r}
+
+dge <- DGEList(counts = data.frame(counts[[x]], row.names = 1))
+dge <- calcNormFactors(dge)
+cpm(dge, normalized.lib.sizes = TRUE) %>%
+    as_tibble(rownames = "gene_id") %>%
+    gather(sample, cpm, 2:ncol(.)) %>%
+    mutate(tissue = sub("_R.$", "", sub(".*RNA_", "", sample))) %>%
+    group_by(gene_id, tissue) %>%
+    transmute(gene_id, tissue, cpm = mean(cpm)) %>%
+    distinct() %>%
+    spread(tissue, cpm)
+
+```
+
+
+
+# ranking value by column = by specie/time point
+
+```{r}
+for (i in 2:length(colnames(value_for_ranking)))
+{
+  rank(value_for_ranking[,i])->value_for_ranking[,i]
+}
+
+## value_for_ranking data corresponds now to the ranking of the previous expression value
+
+```
+
+## Heatmap ranking all species and stages
+
+```{r pressure1}
+
+heatmap(data.matrix(value_for_ranking[,-c(1,2,11,25,40,55,70)]))
+ heatmap(data.matrix(value_for_correlation[,-c(1,2,11,25,40,55,70)]))
+ 
+data.matrix(value_for_ranking[,-c(1,2,11,25,40,55,70)])->data_ranking
+rownames(data_ranking)<-TF_genes_expression5[,1]
+
+data.matrix(value_for_correlation[,-c(1,2,11,25,40,55,70)])->data_correlation
+rownames(data_correlation)<-TF_genes_expression5[,1]
+
+```
+
+## Correlation matrix all species and stages
+
+```{r pressure2}
+data_ranking->data
+#data_correlation->data
+
+cor(data)->correlation_matrix
+my_palette <- colorRampPalette(c("blue", "white","red"))(n = 100)
+library (ggplot2)
+library(viridis)
+viridis(14, alpha = 1, begin = 0, end = 1, direction = 1, option = "D")->colors_stage
+gsub(".*_(\\d+)_.*", "\\1",colnames(data))->num
+subset(as.integer(num),as.integer(num)!="NA")->numbers
+col_colors<-colors_stage[numbers]
+
+heatmap(correlation_matrix, 
+        col=my_palette, scale="none", margins=c(15,15),
+        cexRow=0.5,cexCol=0.5,
+        ColSideColors = col_colors
+        )
+
+```
+
+## saving the heatmap of the correlation matrix in svg
+
+```{r}
+svg("correlation_matrix.svg",h=10, w=10)
+
+heatmap(correlation_matrix, 
+        col=my_palette, scale="none", margins=c(15,15),
+        cexRow=0.5,cexCol=0.5,
+        ColSideColors = col_colors
+        )
+
+dev.off()
+```
+
+## doing UMAP
+
+```{r }
+library(umap)
+library(tidyverse)
+library(ggplot2)
+
+#data_correlation->data
+data_ranking->data
+
+as.data.frame(data)%>%gather(key="Feature",value="Rank")->data2
+data3<-data2%>%separate(Feature,into=c("Specie","TimePoint"),sep="_",extra="merge")
+t(as.matrix(data))->data2
+umap(data2)->result
+result$layout->to_map
+colnames(to_map)<-c("V1","V2")
+unique(data3[,c(1,2)])
+cbind(to_map,unique(data3[,c(1,2)]))->to_map2
+ggplot(data=to_map2,aes(x=V1,y=V2,col=Specie))+geom_point()+theme_minimal()
+
+
+```
+
+```{r pressure3}
+ggplot(data=to_map2,aes(x=V1,y=V2,col=Specie))+geom_point()+theme_minimal()
+```
+
+```{r pressure}
+ggplot(data=to_map2,aes(x=V1,y=V2,col=TimePoint))+geom_point()+theme_minimal()
+```
+
+```{r pressure4}
+#ggplot(data=to_map2,aes(x=V1,y=V2,col=Specie))+geom_point()+geom_line()+theme_minimal()
+```
+
+```{r pressure5}
+#ggplot(data=to_map2,aes(x=V1,y=V2,group=Specie,col=TimePoint,shape=Specie))+geom_point()+geom_line(data=to_map2,aes(group=Specie))+theme_minimal()
+```
+
+## run a correlation calculation based on the *real expression level*, and for only the exact 8 time points having match data between the 4 species
+
+#what is apply is:result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+
+```{r}
+data_correlation->data
+
+na.omit(data)->data
+print(length(data[,1]))
+
+data[,c(1:8)]->data_olat 
+data[,c(9,11,13,15,17,19:21)]->data_drer 
+data[,c(22,25,27,29,31,33:35)]->data_ssa1 
+data[,c(36,39,41,43,45,47:49)]->data_ssa2 
+data[,c(50,53,55,57,59,61:63)]->data_omyk1 
+data[,c(64,67,69,71,73,75:77)]->data_omyk2 
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_drer[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsDrer
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_ssa1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsSsa1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsSsa2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_omyk1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsOmyk1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsOmyk2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_ssa1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsSsa1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsSsa2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_omyk1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsOmyk1
+
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsOmyk2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa1[i,]
+  vector2_gene <- data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa1vsSsa2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa1[i,]
+  vector2_gene <- data_omyk1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa1vsOmyk1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa1[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa1vsOmyk2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa2[i,]
+  vector2_gene <- data_omyk1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa2vsOmyk1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa2[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa2vsOmyk2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_omyk1[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Omyk1vsOmyk2
+
+
+"01_Olat.Drer"->OlatvsDrer[,3]
+"02_Olat.Ssa1"->OlatvsSsa1[,3]
+"03_Olat.Ssa2"->OlatvsSsa2[,3]
+"04_Olat.Omyk1"->OlatvsOmyk1[,3]
+"05_Olat.Omyk2"->OlatvsOmyk2[,3]
+"06_Drer.Ssa1"->DrervsSsa1[,3]
+"07_Drer.Ssa2"->DrervsSsa2[,3]
+"08_Drer.Omyk1"->DrervsOmyk1[,3]
+"09_Drer.Omyk2"->DrervsOmyk2[,3]
+"10_Ssa1.Ssa2"->Ssa1vsSsa2[,3]
+"11_Ssa1.Omyk1"->Ssa1vsOmyk1[,3]
+"12_Ssa1.Omyk2"->Ssa1vsOmyk2[,3]
+"13_Ssa2.Omyk1"->Ssa2vsOmyk1[,3]
+"14_Ssa2.Omyk2"->Ssa2vsOmyk2[,3]
+"15_Omyk1.Omyk2"->Omyk1vsOmyk2[,3]
+
+c(OlatvsDrer[,2],OlatvsSsa1[,2],OlatvsSsa2[,2],OlatvsOmyk1[,2],OlatvsOmyk2[,2],DrervsSsa1[,2],DrervsSsa2[,2],DrervsOmyk1[,2],DrervsOmyk2[,2],Ssa1vsSsa2[,2],Ssa1vsOmyk1[,2],Ssa1vsOmyk2[,2],Ssa2vsOmyk1[,2],Ssa2vsOmyk2[,2],Omyk1vsOmyk2[,2])->cor.val
+
+c(OlatvsDrer[,3],OlatvsSsa1[,3],OlatvsSsa2[,3],OlatvsOmyk1[,3],OlatvsOmyk2[,3],DrervsSsa1[,3],DrervsSsa2[,3],DrervsOmyk1[,3],DrervsOmyk2[,3],Ssa1vsSsa2[,3],Ssa1vsOmyk1[,3],Ssa1vsOmyk2[,3],Ssa2vsOmyk1[,3],Ssa2vsOmyk2[,3],Omyk1vsOmyk2[,3])->cor.name
+
+data.frame(cor.name,as.numeric(cor.val))->correlation_matrix
+colnames(correlation_matrix)<-c("pair","cor.val")
+library("tidyverse")
+tidy_data <- correlation_matrix %>%
+gather(key = "pair", value = "cor.val")
+
+ggplot(tidy_data, aes(x = pair, y = cor.val,fill=pair)) +
+geom_boxplot()+
+  ##geom_boxplot(fill = c(rep("blue",9),"orange4","purple","turquoise","green","orange","limegreen" ), color = "blue" , width = 0.5) +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+labs(x = "Dataset Pairs", y = "Correlation Values", title = "Correlation Boxplot")
+
+```   
+
+## from the real expression level, secondary step to count the sum of each duplicate together, either in Ssa or Omyk; 
+
+```{r}
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_ssa1[i,]+data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsSsa
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_omyk1[i,]+data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsOmyk
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_ssa1[i,]+data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsSsa
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_omyk1[i,]+data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsOmyk
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa1[i,]+data_ssa2[i,]
+  vector2_gene <- data_omyk1[i,]+data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->SsavsOmyk
+
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa1[i,]
+  vector2_gene <- data_ssa1[i,]+data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa1vsSsa
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa2[i,]
+  vector2_gene <- data_ssa1[i,]+data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa2vsSsa
+
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_omyk1[i,]
+  vector2_gene <- data_omyk1[i,]+data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Omyk1vsOmyk
+
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_omyk2[i,]
+  vector2_gene <- data_omyk1[i,]+data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Omyk2vsOmyk
+
+
+
+```
+
+redo the boxplot with the sum of copy1/copy2 done
+
+```{r}
+
+"03S_Olat_Ssa"->OlatvsSsa[,3]
+"05S_Olat_Omyk"->OlatvsOmyk[,3]
+"07S_Drer.Ssa"->DrervsSsa[,3]
+"09S_Drer.Omyk"->DrervsOmyk[,3]
+"16_Ssa.Omyk"->SsavsOmyk[,3]
+"17_Ssa1.Ssa"->Ssa1vsSsa[,3]
+"18_Ssa2.Ssa"->Ssa2vsSsa[,3]
+"19_Omyk1.Omyk"->Omyk1vsOmyk[,3]
+"20_Omyk2.Omyk"->Omyk2vsOmyk[,3]
+
+c(cor.val,OlatvsSsa[,2],OlatvsOmyk[,2],DrervsSsa[,2],DrervsOmyk[,2],SsavsOmyk[,2],Ssa1vsSsa[,2],Ssa2vsSsa[,2],Omyk1vsOmyk[,2],Omyk2vsOmyk[,2])->cor.val2
+
+c(cor.name,OlatvsSsa[,3],OlatvsOmyk[,3],DrervsSsa[,3],DrervsOmyk[,3],SsavsOmyk[,3],Ssa1vsSsa[,3],Ssa2vsSsa[,3],Omyk1vsOmyk[,3],Omyk2vsOmyk[,3])->cor.name2
+data.frame(cor.name2,as.numeric(cor.val2))->correlation_matrix
+colnames(correlation_matrix)<-c("pair","cor.val")
+library("tidyverse")
+tidy_data <- correlation_matrix %>%
+gather(key = "pair", value = "cor.val")
+
+ggplot(tidy_data, aes(x = pair, y = cor.val,fill=pair)) +
+geom_boxplot()+
+  ##geom_boxplot(fill = c(rep("blue",9),"orange4","purple","turquoise","green","orange","limegreen" ), color = "blue" , width = 0.5) +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+labs(x = "Dataset Pairs", y = "Correlation Values", title = "Correlation Boxplot")
+
+```
+
+##obtain the mean values of all the set of correlation values calculated by pair of vectors of the gene expression value of the TF genes through 8 time points
+
+##reduction of the data to the subset of the TF belonging to either AORe or LORe regions; 
+
+```{r}
+
+read.table("SalmonTroutorthologs.tsv",header=TRUE)->orthologs_info
+positions_not_in_vector <- which(!(TF_genes[,1] %in% rownames(data)))
+
+## 15 info = 15 ones corresponding to the TF with absence of value of expression need to be eliminated
+
+TF_genes[-c(positions_not_in_vector),3]->name1
+
+ortho_info_TF<-c()
+
+for (i in 1:length(name1))
+{
+  ##replacement with the column synteny here 19/01/2024
+  subset(orthologs_info,orthologs_info[,3]==name1[i])$phylogeny->ortho_info_TF[i]
+}
+
+cbind(tidy_data,ortho_info_TF)->tidy_data2
+
+#new plot with color from "AORe", "LORe" and "cryptic" info
+
+ggplot(tidy_data2, aes(x = pair, y = cor.val,fill=ortho_info_TF)) +
+geom_boxplot()+
+  ##geom_boxplot(fill = c(rep("blue",9),"orange4","purple","turquoise","green","orange","limegreen" ), color = "blue" , width = 0.5) +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+labs(x = "Dataset Pairs", y = "Correlation Values", title = "Correlation Boxplot")
+
+```
+## reduction of the data to the salmonid species of course
+
+```{r pressure}
+# Create a vector of pair names from 01 to 09
+pair_numbers <- sprintf("%02d", 1:9)
+pair_conditions <- paste0("^", pair_numbers, "_")
+
+# Filter your data
+tidy_data3 <- subset(tidy_data2, !(grepl(paste(pair_conditions, collapse = "|"), pair)))
+
+subset(tidy_data3,tidy_data3$pair!="03S_Olat_Ssa"&tidy_data3$pair!="05S_Olat_Omyk"&tidy_data3$pair!="07S_Drer.Ssa"&tidy_data3$pair!="09S_Drer.Omyk")->tidy_data3
+
+table(ortho_info_TF)
+
+ggplot(tidy_data3, aes(x = pair, y = cor.val,fill=ortho_info_TF)) +
+geom_boxplot()+
+  ##geom_boxplot(fill = c(rep("blue",9),"orange4","purple","turquoise","green","orange","limegreen" ), color = "blue" , width = 0.5) +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+labs(x = "Dataset Pairs", y = "Correlation Values", title = "Correlation Boxplot")
+
+
+
+```
+#test change of the plot= by merging some in same boxplot
+```{r}
+modified_data <- tidy_data3 %>%
+mutate(pair = case_when(
+pair == "11_Ssa1.Omyk1" ~ "01_copies",
+TRUE ~ pair
+))
+modified_data <- modified_data %>%
+mutate(pair = case_when(
+pair == "12_Ssa1.Omyk2" ~ "01_copies",
+TRUE ~ pair
+))
+modified_data <- modified_data %>%
+mutate(pair = case_when(
+pair == "13_Ssa2.Omyk1" ~ "01_copies",
+TRUE ~ pair
+))
+modified_data <- modified_data %>%
+mutate(pair = case_when(
+pair == "14_Ssa2.Omyk2" ~ "01_copies",
+TRUE ~ pair
+))
+modified_data <- modified_data %>%
+mutate(pair = case_when(
+pair == "17_Ssa1.Ssa" ~ "02_copies.sum_Ssa",
+TRUE ~ pair
+))
+modified_data <- modified_data %>%
+mutate(pair = case_when(
+pair == "18_Ssa2.Ssa" ~ "02_copies.sum_Ssa",
+TRUE ~ pair
+))
+modified_data <- modified_data %>%
+mutate(pair = case_when(
+pair == "19_Omyk1.Omyk" ~ "03_copies.sum_Omyk",
+TRUE ~ pair
+))
+modified_data <- modified_data %>%
+mutate(pair = case_when(
+pair == "20_Omyk2.Omyk" ~ "03_copies.sum_Omyk",
+TRUE ~ pair
+))
+
+ggplot(modified_data, aes(x = pair, y = cor.val,fill=ortho_info_TF)) +
+geom_boxplot()+
+  ##geom_boxplot(fill = c(rep("blue",9),"orange4","purple","turquoise","green","orange","limegreen" ), color = "blue" , width = 0.5) +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+labs(x = "Dataset Pairs", y = "Correlation Values", title = "Correlation Boxplot")
+
+
+
+
+```
+
+
+```{r pressure}
+data_correlation[,c(22:77)]->data
+cor(data)->correlation_matrix
+my_palette <- colorRampPalette(c("blue", "white","red"))(n = 100)
+library (ggplot2)
+library(viridis)
+viridis(14, alpha = 1, begin = 0, end = 1, direction = 1, option = "D")->colors_stage
+gsub(".*_(\\d+)_.*", "\\1",colnames(data))->num
+subset(as.integer(num),as.integer(num)!="NA")->numbers
+col_colors<-colors_stage[numbers]
+
+kmeans_result <- kmeans(data, centers = 16)
+row_clusters <- as.character(kmeans_result$cluster)
+
+
+
+svg("heatmap_salmonids3.svg", width = 8, height = 6)
+print(
+  heatmap(data, 
+        #col=my_palette, 
+        scale="row", 
+        margins=c(15,15),
+        cexRow=0.05,cexCol=0.2,
+        ColSideColors = col_colors,
+        RowSideColors = row_clusters, 
+        Rowv = NULL,
+        Colv=NA
+        )
+)
+dev.off()
+
+
+##CLUSTER DATA LIST IS CONTAINING ALL THE INFO
+
+
+
+ #cluster_means_long <- cluster_means %>%
+    # gather(key = "Gene", value = "Mean_Expression", -Cluster)
+ 
+cluster_means_long$Cluster <- factor(sprintf("%02d", as.numeric(cluster_means_long$Cluster)))
+
+# Plot the average expression pattern for each cluster using a line plot
+#ggplot(cluster_means_long, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+# labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+#subset(cluster_means_long, cluster_means_long$Cluster=="01")->cluster_means_long1
+#ggplot(cluster_means_long1, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+#subset(cluster_means_long, cluster_means_long$Cluster=="02")->cluster_means_long2
+#ggplot(cluster_means_long2, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="03")->cluster_means_long3
+# ggplot(cluster_means_long3, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="04")->cluster_means_long4
+# ggplot(cluster_means_long4, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="05")->cluster_means_long5
+# ggplot(cluster_means_long5, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="06")->cluster_means_long6
+# ggplot(cluster_means_long6, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="07")->cluster_means_long7
+# ggplot(cluster_means_long7, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="08")->cluster_means_long8
+# ggplot(cluster_means_long8, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="09")->cluster_means_long9
+# ggplot(cluster_means_long9, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="10")->cluster_means_long10
+# ggplot(cluster_means_long10, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="11")->cluster_means_long11
+# ggplot(cluster_means_long11, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="12")->cluster_means_long12
+# ggplot(cluster_means_long12, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="13")->cluster_means_long13
+# ggplot(cluster_means_long13, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="14")->cluster_means_long14
+# ggplot(cluster_means_long14, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="15")->cluster_means_long15
+# ggplot(cluster_means_long15, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+# subset(cluster_means_long, cluster_means_long$Cluster=="16")->cluster_means_long16
+# ggplot(cluster_means_long16, aes(x = Gene, y = Mean_Expression, group = Cluster, color = Cluster)) +
+#  geom_line() +
+#  labs(title = "Average Expression Pattern by Cluster", x = "Gene", y = "Mean Expression") +
+#  theme_minimal() +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+#  guides(color = guide_legend(ncol = 4, title = "Cluster"))
+
+ ##SECOND PART TO HAVE 4 LINES INSTEAD OF 1: 
+
+library(ggplot2)
+
+# Assuming your data has columns: Cluster, Gene, Mean_Expression, Gene_Type
+
+
+# Subset data for Cluster 1
+cluster_means_long_1 <- subset(cluster_means_long, Cluster == "01")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_1$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_1$Gene <- gsub("^[12]_", "", cluster_means_long_1$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_1, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster1", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# Subset data for Cluster 2
+cluster_means_long_2 <- subset(cluster_means_long, Cluster == "02")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_2$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_2$Gene <- gsub("^[12]_", "", cluster_means_long_2$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_2, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster2", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# Subset data for Cluster 3
+cluster_means_long_3 <- subset(cluster_means_long, Cluster == "03")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_3$Gene)
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_3$Gene <- gsub("^[12]_", "", cluster_means_long_3$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_3, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster3", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# Subset data for Cluster 4
+cluster_means_long_4 <- subset(cluster_means_long, Cluster == "04")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_4$Gene)
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_4$Gene <- gsub("^[12]_", "", cluster_means_long_4$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_4, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster4", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 5
+cluster_means_long_5 <- subset(cluster_means_long, Cluster == "05")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_5$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_5$Gene <- gsub("^[12]_", "", cluster_means_long_5$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_5, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster5", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+
+# Subset data for Cluster 6
+cluster_means_long_6 <- subset(cluster_means_long, Cluster == "06")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_6$Gene)
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_6$Gene <- gsub("^[12]_", "", cluster_means_long_6$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_6, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster6", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 7
+cluster_means_long_7 <- subset(cluster_means_long, Cluster == "07")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_7$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_7$Gene <- gsub("^[12]_", "", cluster_means_long_7$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_7, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster7", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 8
+cluster_means_long_8 <- subset(cluster_means_long, Cluster == "08")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_8$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_8$Gene <- gsub("^[12]_", "", cluster_means_long_8$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_8, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster8", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 9
+cluster_means_long_9 <- subset(cluster_means_long, Cluster == "09")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_9$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_9$Gene <- gsub("^[12]_", "", cluster_means_long_9$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_9, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster9", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 10
+cluster_means_long_10 <- subset(cluster_means_long, Cluster == "10")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_10$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_10$Gene <- gsub("^[12]_", "", cluster_means_long_10$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_10, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster10", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 11
+cluster_means_long_11 <- subset(cluster_means_long, Cluster == "11")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_11$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_11$Gene <- gsub("^[12]_", "", cluster_means_long_11$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_11, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster11", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 12
+cluster_means_long_12 <- subset(cluster_means_long, Cluster == "12")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_12$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_12$Gene <- gsub("^[12]_", "", cluster_means_long_12$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_12, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster12", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 13
+cluster_means_long_13 <- subset(cluster_means_long, Cluster == "13")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_13$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_13$Gene <- gsub("^[12]_", "", cluster_means_long_13$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_13, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster13", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 14
+cluster_means_long_14 <- subset(cluster_means_long, Cluster == "14")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_14$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_14$Gene <- gsub("^[12]_", "", cluster_means_long_14$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_14, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster14", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 15
+cluster_means_long_15 <- subset(cluster_means_long, Cluster == "15")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_15$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_15$Gene <- gsub("^[12]_", "", cluster_means_long_15$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_15, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Cluster15", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Subset data for Cluster 16
+cluster_means_long_16 <- subset(cluster_means_long, Cluster == "16")
+
+# Extract unique stages from the Gene column
+unique_stages <- unique(cluster_means_long_16$Gene)
+
+
+# Remove leading "1_" and "2_" from the x-axis labels
+cluster_means_long_16$Gene <- gsub("^[12]_", "", cluster_means_long_16$Gene)
+
+# Plot the average expression pattern for each Gene_Type
+ggplot(cluster_means_long_16, aes(x = factor(Gene, levels = unique_stages), y = Mean_Expression, group = Gene_Type, color = Gene_Type)) +
+  geom_line() +
+  labs(title = "Average Expression Pattern by Ohnologs, through Ontogeny__Ckuster16", x = "Gene", y = "Mean Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+## calcul of the overall new correlation inside each cluster
+library(dplyr)
+ 
+ # Function to calculate correlations for a specific cluster
+ calculate_correlations <- function(cluster_data, cluster_number) {
+     gene_types <- unique(cluster_data$Gene_Type)
+     gene_type_combinations <- combn(gene_types, 2, simplify = TRUE)
+     
+     correlation_results <- data.frame(
+         Cluster = integer(),
+         Gene_Type1 = character(),
+         Gene_Type2 = character(),
+         Correlation = numeric()
+     )
+     
+     for (i in seq(ncol(gene_type_combinations))) {
+         type1 <- gene_type_combinations[1, i]
+         type2 <- gene_type_combinations[2, i]
+         
+         subset_data_type1 <- subset(cluster_data, Gene_Type == type1)
+         subset_data_type2 <- subset(cluster_data, Gene_Type == type2)
+         
+         correlation_value <- cor(subset_data_type1$Mean_Expression, subset_data_type2$Mean_Expression)
+         
+         correlation_results <- rbind(correlation_results, data.frame(
+             Cluster = cluster_number,
+             Gene_Type1 = type1,
+             Gene_Type2 = type2,
+             Correlation = correlation_value
+         ))
+     }
+     
+     return(correlation_results)
+ }
+ 
+ # List to store results for each cluster
+ correlation_results_list <- list()
+ 
+ # Iterate over each cluster
+ for (cluster_number in 1:16) {
+     cluster_data <- get(paste0("cluster_means_long_", cluster_number), envir = .GlobalEnv)
+     correlation_results_list[[cluster_number]] <- calculate_correlations(cluster_data, cluster_number)
+ }
+ 
+ # Combine results for all clusters into a single data frame
+ correlation_results_all <- do.call(rbind, correlation_results_list)
+ 
+ # Display the combined correlation results table
+ print(correlation_results_all)
+ correlation_results_all->a
+
+  ggplot(a, aes(x = as.factor(Cluster), y = Correlation, color = interaction(Gene_Type1, Gene_Type2))) +
+     geom_point() +
+     geom_hline(yintercept=0.95, linetype = "dashed", color = "orange") +
+     geom_hline(yintercept = seq(0.7, 1, by = 0.5), linetype = "dotted", color = "lightgrey") +
+     labs(title = "Mean Correlation of Expression for each Cluster",
+          x = "Cluster",
+          y = "Mean Correlation value") +
+     scale_color_discrete(name = "Ohnologs Combination") +
+     theme_minimal()
+
+ print(table(row_clusters))
+  
+ subset(a,a$Cluster!=1)->b
+ subset(b,b$Cluster!=3)->b
+ subset(b,b$Cluster!=5)->b
+ subset(b,b$Cluster!=6)->b
+subset(b,b$Cluster!=12)->b
+subset(b,b$Cluster!=14)->b
+
+ 
+ 
+```
+
+# We want to identify a group of genes (=cluster) in which the copy are functional Divergent: the duplicated genes in Atlantic salmon and rainbow trout have distinct expression patterns. SSA1/SSA2 vs OMYK1/OMYK2 is lower. 
+# To do so, I will remove from the graph the points corresponding to SSA1 vs SSA2 and OMYK1 vs OMYK2
+
+
+```{r pressure}
+##minus clusters 2, 7, 8, 11
+
+subset(a,a$Cluster!=2)->b
+subset(b,b$Cluster!=7)->b
+subset(b,b$Cluster!=8)->b
+subset(b,b$Cluster!=11)->b
+
+subset(b,!(b$Gene_Type1=="SSA1"&b$Gene_Type2=="SSA2"))->c
+subset(c,!(c$Gene_Type1=="OMYK1"&c$Gene_Type2=="OMYK2"))->c
+
+
+ ggplot(b, aes(x = as.factor(Cluster), y = Correlation, color = interaction(Gene_Type1, Gene_Type2))) +
+     geom_point() +
+     geom_hline(yintercept = seq(0.7, 1, by = 0.5), linetype = "dotted", color = "lightgrey") +
+     labs(title = "Correlation by Cluster and Gene Type Combination",
+          x = "Cluster",
+          y = "Correlation") +
+     scale_color_discrete(name = "Gene Type Combination") +
+     theme_minimal()
+
+
+
+
+ 
+ 
+
+
+```
+
+
+```{r pressure}
+## CORRELATION MATRIX + TREE, CLUSTER 4:
+
+subset(subset(b,b$Cluster==4))->b4
+data.frame(b4$Gene_Type1,b4$Gene_Type2,b4$Correlation)->correlation_data
+gene_types <- sort(unique(c(correlation_data$b4.Gene_Type1, correlation_data$b4.Gene_Type2)))
+cor_matrix <- matrix(NA, nrow = length(gene_types), ncol = length(gene_types), dimnames = list(gene_types, gene_types))
+ 
+ # Fill the matrix with correlation values
+ for (i in 1:nrow(correlation_data)) {
+     gene1 <- correlation_data$b4.Gene_Type1[i]
+     gene2 <- correlation_data$b4.Gene_Type2[i]
+     cor_val <- correlation_data$b4.Correlation[i]
+     cor_matrix[gene1, gene2] <- cor_val
+     cor_matrix[gene2, gene1] <- cor_val
+ }
+
+cor_matrix[is.na(cor_matrix)] <- 1
+
+ # Convert correlation matrix to distance matrix
+ distance_matrix <- as.dist(1 - abs(cor_matrix))
+ 
+ # Perform hierarchical clustering
+ hclust_result <- hclust(distance_matrix, method = "complete")
+ 
+ # Cut the tree to obtain clusters (optional)
+ # You can adjust the height parameter to control the number of clusters
+ clusters <- cutree(hclust_result, h = 0.2)
+ 
+ # Plot the dendrogram
+ plot(hclust_result, main = "Dendrogram of Gene Cluster4", sub = NULL, xlab = "Genes", ylab = "Distance")
+ hc <- hclust(dist(cor_matrix))
+ 
+ # Create the dendrogram and flip it upside down
+dend <- as.dendrogram(hc)
+ dend <- rev(dend)
+ 
+ # Plot the hierarchical clustering with the flipped dendrogram
+ plot(dend)
+ 
+ 
+ #CLUSTER 9
+
+subset(subset(b,b$Cluster==9))->b4
+data.frame(b4$Gene_Type1,b4$Gene_Type2,b4$Correlation)->correlation_data
+gene_types <- sort(unique(c(correlation_data$b4.Gene_Type1, correlation_data$b4.Gene_Type2)))
+cor_matrix <- matrix(NA, nrow = length(gene_types), ncol = length(gene_types), dimnames = list(gene_types, gene_types))
+ 
+ # Fill the matrix with correlation values
+ for (i in 1:nrow(correlation_data)) {
+     gene1 <- correlation_data$b4.Gene_Type1[i]
+     gene2 <- correlation_data$b4.Gene_Type2[i]
+     cor_val <- correlation_data$b4.Correlation[i]
+     cor_matrix[gene1, gene2] <- cor_val
+     cor_matrix[gene2, gene1] <- cor_val
+ }
+
+cor_matrix[is.na(cor_matrix)] <- 1
+
+ # Convert correlation matrix to distance matrix
+ distance_matrix <- as.dist(1 - abs(cor_matrix))
+ 
+ # Perform hierarchical clustering
+ hclust_result <- hclust(distance_matrix, method = "complete")
+ 
+ # Cut the tree to obtain clusters (optional)
+ # You can adjust the height parameter to control the number of clusters
+ clusters <- cutree(hclust_result, h = 0.2)
+ 
+ # Plot the dendrogram
+ plot(hclust_result, main = "Dendrogram of Gene 9", sub = NULL, xlab = "Genes", ylab = "Distance")
+ hc <- hclust(dist(cor_matrix))
+ 
+ # Create the dendrogram and flip it upside down
+dend <- as.dendrogram(hc)
+ dend <- rev(dend)
+ 
+ # Plot the hierarchical clustering with the flipped dendrogram
+ plot(dend)
+ 
+ 
+  
+ #CLUSTER 10
+
+subset(subset(b,b$Cluster==10))->b4
+data.frame(b4$Gene_Type1,b4$Gene_Type2,b4$Correlation)->correlation_data
+gene_types <- sort(unique(c(correlation_data$b4.Gene_Type1, correlation_data$b4.Gene_Type2)))
+cor_matrix <- matrix(NA, nrow = length(gene_types), ncol = length(gene_types), dimnames = list(gene_types, gene_types))
+ 
+ # Fill the matrix with correlation values
+ for (i in 1:nrow(correlation_data)) {
+     gene1 <- correlation_data$b4.Gene_Type1[i]
+     gene2 <- correlation_data$b4.Gene_Type2[i]
+     cor_val <- correlation_data$b4.Correlation[i]
+     cor_matrix[gene1, gene2] <- cor_val
+     cor_matrix[gene2, gene1] <- cor_val
+ }
+
+cor_matrix[is.na(cor_matrix)] <- 1
+
+ # Convert correlation matrix to distance matrix
+ distance_matrix <- as.dist(1 - abs(cor_matrix))
+ 
+ # Perform hierarchical clustering
+ hclust_result <- hclust(distance_matrix, method = "complete")
+ 
+ # Cut the tree to obtain clusters (optional)
+ # You can adjust the height parameter to control the number of clusters
+ clusters <- cutree(hclust_result, h = 0.2)
+ 
+ # Plot the dendrogram
+ plot(hclust_result, main = "Dendrogram of Gene 10", sub = NULL, xlab = "Genes", ylab = "Distance")
+ hc <- hclust(dist(cor_matrix))
+ 
+ # Create the dendrogram and flip it upside down
+dend <- as.dendrogram(hc)
+ dend <- rev(dend)
+ 
+ # Plot the hierarchical clustering with the flipped dendrogram
+ plot(dend)
+ 
+  
+ #CLUSTER 13
+
+subset(subset(b,b$Cluster==13))->b4
+data.frame(b4$Gene_Type1,b4$Gene_Type2,b4$Correlation)->correlation_data
+gene_types <- sort(unique(c(correlation_data$b4.Gene_Type1, correlation_data$b4.Gene_Type2)))
+cor_matrix <- matrix(NA, nrow = length(gene_types), ncol = length(gene_types), dimnames = list(gene_types, gene_types))
+ 
+ # Fill the matrix with correlation values
+ for (i in 1:nrow(correlation_data)) {
+     gene1 <- correlation_data$b4.Gene_Type1[i]
+     gene2 <- correlation_data$b4.Gene_Type2[i]
+     cor_val <- correlation_data$b4.Correlation[i]
+     cor_matrix[gene1, gene2] <- cor_val
+     cor_matrix[gene2, gene1] <- cor_val
+ }
+
+cor_matrix[is.na(cor_matrix)] <- 1
+
+ # Convert correlation matrix to distance matrix
+ distance_matrix <- as.dist(1 - abs(cor_matrix))
+ 
+ # Perform hierarchical clustering
+ hclust_result <- hclust(distance_matrix, method = "complete")
+ 
+ # Cut the tree to obtain clusters (optional)
+ # You can adjust the height parameter to control the number of clusters
+ clusters <- cutree(hclust_result, h = 0.2)
+ 
+ # Plot the dendrogram
+ plot(hclust_result, main = "Dendrogram of Gene 13", sub = NULL, xlab = "Genes", ylab = "Distance")
+ hc <- hclust(dist(cor_matrix))
+ 
+ # Create the dendrogram and flip it upside down
+dend <- as.dendrogram(hc)
+ dend <- rev(dend)
+ 
+ # Plot the hierarchical clustering with the flipped dendrogram
+ plot(dend)
+ 
+ 
+  
+ #CLUSTER 15
+
+subset(subset(b,b$Cluster==15))->b4
+data.frame(b4$Gene_Type1,b4$Gene_Type2,b4$Correlation)->correlation_data
+gene_types <- sort(unique(c(correlation_data$b4.Gene_Type1, correlation_data$b4.Gene_Type2)))
+cor_matrix <- matrix(NA, nrow = length(gene_types), ncol = length(gene_types), dimnames = list(gene_types, gene_types))
+ 
+ # Fill the matrix with correlation values
+ for (i in 1:nrow(correlation_data)) {
+     gene1 <- correlation_data$b4.Gene_Type1[i]
+     gene2 <- correlation_data$b4.Gene_Type2[i]
+     cor_val <- correlation_data$b4.Correlation[i]
+     cor_matrix[gene1, gene2] <- cor_val
+     cor_matrix[gene2, gene1] <- cor_val
+ }
+
+cor_matrix[is.na(cor_matrix)] <- 1
+
+ # Convert correlation matrix to distance matrix
+ distance_matrix <- as.dist(1 - abs(cor_matrix))
+ 
+ # Perform hierarchical clustering
+ hclust_result <- hclust(distance_matrix, method = "complete")
+ 
+ # Cut the tree to obtain clusters (optional)
+ # You can adjust the height parameter to control the number of clusters
+ clusters <- cutree(hclust_result, h = 0.2)
+ 
+ # Plot the dendrogram
+ plot(hclust_result, main = "Dendrogram of Gene 15", sub = NULL, xlab = "Genes", ylab = "Distance")
+ hc <- hclust(dist(cor_matrix))
+ 
+ # Create the dendrogram and flip it upside down
+dend <- as.dendrogram(hc)
+ dend <- rev(dend)
+ 
+ # Plot the hierarchical clustering with the flipped dendrogram
+ plot(dend)
+
+  
+ #CLUSTER 16
+
+subset(subset(b,b$Cluster==16))->b4
+data.frame(b4$Gene_Type1,b4$Gene_Type2,b4$Correlation)->correlation_data
+gene_types <- sort(unique(c(correlation_data$b4.Gene_Type1, correlation_data$b4.Gene_Type2)))
+cor_matrix <- matrix(NA, nrow = length(gene_types), ncol = length(gene_types), dimnames = list(gene_types, gene_types))
+ 
+ # Fill the matrix with correlation values
+ for (i in 1:nrow(correlation_data)) {
+     gene1 <- correlation_data$b4.Gene_Type1[i]
+     gene2 <- correlation_data$b4.Gene_Type2[i]
+     cor_val <- correlation_data$b4.Correlation[i]
+     cor_matrix[gene1, gene2] <- cor_val
+     cor_matrix[gene2, gene1] <- cor_val
+ }
+
+cor_matrix[is.na(cor_matrix)] <- 1
+
+ # Convert correlation matrix to distance matrix
+ distance_matrix <- as.dist(1 - abs(cor_matrix))
+ 
+ # Perform hierarchical clustering
+ hclust_result <- hclust(distance_matrix, method = "complete")
+ 
+ # Cut the tree to obtain clusters (optional)
+ # You can adjust the height parameter to control the number of clusters
+ clusters <- cutree(hclust_result, h = 0.2)
+ 
+ # Plot the dendrogram
+ plot(hclust_result, main = "Dendrogram of Gene 16", sub = NULL, xlab = "Genes", ylab = "Distance")
+ hc <- hclust(dist(cor_matrix))
+ 
+ # Create the dendrogram and flip it upside down
+dend <- as.dendrogram(hc)
+ dend <- rev(dend)
+ 
+ # Plot the hierarchical clustering with the flipped dendrogram
+ plot(dend)
+ 
+ 
+```
+
+
+```{r pressure}
+ # Given data
+ cor_data_from_up <- read.table(text = "
+        Olat	Drer	Ssa1	Omyk1	Ssa2	Omyk2	Ssa	Omyk
+ Olat	1	0.4765635	0.4434485	0.4097225	0.4230704	0.4022381	0.4644292	0.431904
+ Drer	0.4765635	1	0.384341	0.3777564	0.3178903	0.31876	0.3964203	0.3378516
+ Ssa1	0.4434485	0.384341	1	0.6469153	0.5975265	0.5085846	0.8368931	NA
+ Omyk1	0.4097225	0.3777564	0.6469153	1	0.5312333	0.6304976	NA	0.8715754
+ Ssa2	0.4230704	0.3178903	0.5975265	0.5312333	1	0.6236969	0.8658071	NA
+ Omyk2	0.4022381	0.31876	0.5085846	0.6304976	0.6236969	1	NA	0.8601276
+ Ssa	0.4644292	0.3964203	0.8368931	NA	0.8658071	NA	1	0.6865309
+ Omyk	0.431904	0.3378516	NA	0.8715754	NA	0.8601276	0.6865309	1
+ ", header = TRUE, row.names = 1)
+ 
+ # Replace NA values with 0
+ cor_data_from_up[is.na(cor_data_from_up)] <- 0
+ 
+  # Convert correlation matrix to distance matrix
+ distance_matrix <- as.dist(1 - abs(cor_data_from_up))
+ 
+ # Perform hierarchical clustering
+ hclust_result <- hclust(distance_matrix, method = "complete")
+ 
+ # Cut the tree to obtain clusters (optional)
+ # You can adjust the height parameter to control the number of clusters
+ clusters <- cutree(hclust_result, h = 0.2)
+ 
+ # Plot the dendrogram
+ plot(hclust_result, main = "Dendrogram", sub = NULL, xlab = "Species", ylab = "Distance")
+ hc <- hclust(dist(cor_data_from_up))
+ 
+ # Create the dendrogram and flip it upside down
+dend <- as.dendrogram(hc)
+ dend <- rev(dend)
+ 
+ # Plot the hierarchical clustering with the flipped dendrogram
+ plot(dend)
+ 
+ 
+```
+
+
+
+```{r}
+
+set<-c()
+
+for (i in 1:length(rownames(cluster_data_list$Cluster13))){
+ subset(TF_genes,TF_genes$Clupeocephala==rownames(cluster_data_list$Cluster13)[i])->line
+ rbind(set,line)->set
+}
+
+set->name_genes_cluster13
+
+
+set<-c()
+
+for (i in 1:length(rownames(cluster_data_list$Cluster15))){
+ subset(TF_genes,TF_genes$Clupeocephala==rownames(cluster_data_list$Cluster15)[i])->line
+ rbind(set,line)->set
+}
+
+set->name_genes_cluster15
+
+
+
+```
+
+
+```{undefinedTO NOT RUN}
+## run a correlation calculation based on the *ranking values* of the expression level, and for only the exact 8 time points having match data between the 4 species ==> should be actually the exact same result;
+
+data_ranking->data
+
+na.omit(data)->data
+print(length(data[,1]))
+
+data[,c(1:8)]->data_olat 
+data[,c(9,11,13,15,17,19:21)]->data_drer 
+data[,c(22,25,27,29,31,33:35)]->data_ssa1 
+data[,c(36,39,41,43,45,47:49)]->data_ssa2 
+data[,c(50,53,55,57,59,61:63)]->data_omyk1 
+data[,c(64,67,69,71,73,75:77)]->data_omyk2 
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_drer[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsDrer
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_ssa1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsSsa1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsSsa2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_omyk1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsOmyk1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_olat[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->OlatvsOmyk2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_ssa1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsSsa1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsSsa2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_omyk1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsOmyk1
+
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_drer[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->DrervsOmyk2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa1[i,]
+  vector2_gene <- data_ssa2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa1vsSsa2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa1[i,]
+  vector2_gene <- data_omyk1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa1vsOmyk1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa1[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa1vsOmyk2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa2[i,]
+  vector2_gene <- data_omyk1[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa2vsOmyk1
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_ssa2[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Ssa2vsOmyk2
+
+
+results <- data.frame(
+  p.value = numeric(length(rownames(data_olat))),
+  estimate = numeric(length(rownames(data_olat)))
+)
+
+for (i in 1:length(rownames(data_olat))) {
+  vector_gene <- data_omyk1[i,]
+  vector2_gene <- data_omyk2[i,]
+  
+  result <- cor.test(as.numeric(vector_gene), as.numeric(vector2_gene), method = "pearson", alternative = "greater")[c("p.value", "estimate")]
+  
+  results[i, ] <- result
+}
+
+results->Omyk1vsOmyk2
+
+
+"01_Olat.Drer"->OlatvsDrer[,3]
+"02_Olat.Ssa1"->OlatvsSsa1[,3]
+"03_Olat.Ssa2"->OlatvsSsa2[,3]
+"04_Olat.Omyk1"->OlatvsOmyk1[,3]
+"05_Olat.Omyk2"->OlatvsOmyk2[,3]
+"06_Drer.Ssa1"->DrervsSsa1[,3]
+"07_Drer.Ssa2"->DrervsSsa2[,3]
+"08_Drer.Omyk1"->DrervsOmyk1[,3]
+"09_Drer.Omyk2"->DrervsOmyk2[,3]
+"10_Ssa1.Ssa2"->Ssa1vsSsa2[,3]
+"11_Ssa1.Omyk1"->Ssa1vsOmyk1[,3]
+"12_Ssa1.Omyk2"->Ssa1vsOmyk2[,3]
+"13_Ssa2.Omyk1"->Ssa2vsOmyk1[,3]
+"14_Ssa2.Omyk2"->Ssa2vsOmyk2[,3]
+"15_Omyk1.Omyk2"->Omyk1vsOmyk2[,3]
+
+c(OlatvsDrer[,2],OlatvsSsa1[,2],OlatvsSsa2[,2],OlatvsOmyk1[,2],OlatvsOmyk2[,2],DrervsSsa1[,2],DrervsSsa2[,2],DrervsOmyk1[,2],DrervsOmyk2[,2],Ssa1vsSsa2[,2],Ssa1vsOmyk1[,2],Ssa1vsOmyk2[,2],Ssa2vsOmyk1[,2],Ssa2vsOmyk2[,2],Omyk1vsOmyk2[,2])->cor.val
+
+c(OlatvsDrer[,3],OlatvsSsa1[,3],OlatvsSsa2[,3],OlatvsOmyk1[,3],OlatvsOmyk2[,3],DrervsSsa1[,3],DrervsSsa2[,3],DrervsOmyk1[,3],DrervsOmyk2[,3],Ssa1vsSsa2[,3],Ssa1vsOmyk1[,3],Ssa1vsOmyk2[,3],Ssa2vsOmyk1[,3],Ssa2vsOmyk2[,3],Omyk1vsOmyk2[,3])->cor.name
+
+data.frame(cor.name,as.numeric(cor.val))->correlation_matrix
+colnames(correlation_matrix)<-c("pair","cor.val")
+library("tidyverse")
+tidy_data <- correlation_matrix %>%
+gather(key = "pair", value = "cor.val")
+
+ggplot(tidy_data, aes(x = pair, y = cor.val,fill=pair)) +
+geom_boxplot()+
+  ##geom_boxplot(fill = c(rep("blue",9),"orange4","purple","turquoise","green","orange","limegreen" ), color = "blue" , width = 0.5) +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+labs(x = "Dataset Pairs", y = "Correlation Values", title = "Correlation Boxplot")
+```
